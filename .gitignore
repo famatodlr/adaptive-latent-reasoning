@@ -5,6 +5,7 @@ checkpoints/
 outputs/
 runs/
 wandb/
+Option-A/data/
 
 # Entornos virtuales
 .venv/
