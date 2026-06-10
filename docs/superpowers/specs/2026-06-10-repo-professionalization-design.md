@@ -187,12 +187,15 @@ The design is intentionally MLflow-ready so a later integration needs no rework:
 
 ## 9. Scope
 
-**In scope:** directory restructure; pretrained renames; decoder move + gitignore; run migration, rescue, and targeted cleanup; `runs.md` manifest; 4 safe code renames + inline comments; `parameters.md` glossary; `pipeline.md`; MLflow-readiness notes/gitignore reservation.
+**Branch:** all work happens on `chore/repo-professionalization` (off `pondernet`).
+
+**In scope:** directory restructure; pretrained renames; decoder move + gitignore; run migration, rescue, and targeted cleanup; `runs.md` manifest; 4 safe code renames + inline comments; `parameters.md` glossary; `pipeline.md`; MLflow-readiness notes/gitignore reservation; **`pondernet/` module hygiene — mechanical + bug-fix tier only (§12)**.
 
 **Out of scope (non-goals):**
 - Renaming checkpoint-bound module attrs (`codi`, `decoder`, `prj`, `halt_head`, `pj_in`, `pj_out`) — would require a state_dict remap shim; deferred.
-- Config-driven run files / changes to the script argument system beyond path updates.
-- Any change to training, loss, or inference logic.
+- **Module structural refactor** — extracting shared logic into `src/` (`data.py`, `eval_utils.py`, `io_utils.py`), making `train.py`/`test.py` thin entrypoints, decomposing the `train()`/`evaluation()`/`forward()` monoliths, promoting hardcoded hyperparams to args, a dataset registry, and moving `smoke_pondernet.py → tests/`. All deferred to a follow-up; the duplication between `train.py`/`test.py` is left in place for now.
+- Config-driven run files / changes to the script argument system beyond path/flag updates.
+- Any change to the training/loss/inference **math**. (Note: §12 *does* intentionally change runtime behavior in three safe ways — removing a hang-causing `breakpoint()`, restoring deterministic eval seeding, and making I/O errors raise instead of returning `None`.)
 - Retraining the known-bad run or the failed warm-start.
 - Implementing MLflow.
 
@@ -200,11 +203,12 @@ The design is intentionally MLflow-ready so a later integration needs no rework:
 
 Each step is independently verifiable:
 
-1. Docs scaffolding: `parameters.md` glossary + CLI reference.
-2. Safe code renames (4 identifiers) + update in-repo scripts; verify training/eval still launches.
-3. Directory restructure: `models/pretrained/` + decoder move + `.gitignore` update + script path updates.
-4. Build `runs.md` mapping table → **user approval gate** → execute migration, rescue, and deletions.
-5. `pipeline.md` (depends on final paths/run-ids) + MLflow-readiness gitignore reservation.
+1. Module hygiene (§12): delete `.venv`, slim `requirements.txt`, fix `.gitattributes`, bug fixes (breakpoint/seeding/I/O), dead-code purge, path/comment cleanup. Verify train/eval smoke + eval determinism.
+2. Docs scaffolding: `parameters.md` glossary + CLI reference.
+3. Safe code renames (4 identifiers) + update in-repo scripts; verify training/eval still launches.
+4. Directory restructure: `models/pretrained/` + decoder move + `.gitignore` update + script path updates.
+5. Build `runs.md` mapping table → **user approval gate** → execute migration, rescue, and deletions.
+6. `pipeline.md` (depends on final paths/run-ids) + MLflow-readiness gitignore reservation.
 
 ## 11. Verification
 
@@ -212,6 +216,37 @@ Each step is independently verifiable:
 - **Decoder move:** `fetch_simcot_decoder.py --out <new path>` reproduces the decoder; eval using the new `DECODER_PATH` runs.
 - **Migration/cleanup:** executed only after the `runs.md` table is approved; rescued checkpoint loads and reproduces a kept `lr1e4` result.
 - **No silent loss:** every deleted item is listed in the manifest with its reason.
+
+## 12. `pondernet/` module hygiene (mechanical + bug-fix tier)
+
+Scripts (`scripts/*.sh`, `fetch_simcot_decoder.py`) are already at a good standard and need only the path/flag updates from §3–§5 (plus an MLflow-readiness note that `--report_to tensorboard` at `train_gpt2_gsm8k_pondernet.sh:72` is the swap point). The work here targets the three carried-over modules. **No file moves, no structural refactor, no math changes.**
+
+### Packaging / repo hygiene
+- Delete `pondernet/.venv` (5.6 GB, gitignored, redundant with the root `uv` `.venv`).
+- Slim `pondernet/requirements.txt` from the full `pip freeze` (60+ lines incl. transitive + `nvidia-*` wheels) down to direct top-level deps; note the root `uv`/`uv.lock` as the source of truth.
+- Remove the stale LFS rule in `pondernet/.gitattributes` (`models/simcot_gpt2_decoder/*.safetensors filter=lfs …`) — the decoder is being un-tracked and moved (§3–§4), so the rule is dead.
+
+### Genuine bugs (affect correctness / reproducibility)
+- **`train.py:254-255`** — live `breakpoint()` inside `except Exception` hangs non-interactive training. Replace with a `raise` carrying the offending sequence.
+- **`test.py:253`** — `#set_seed(42)` is commented out while eval samples (`do_sample=True`, `temperature/top_k/top_p` at `test.py:240-246`) across passes → nondeterministic accuracies. Restore deterministic seeding. *Caveat: this can shift previously reported eval numbers; re-running affected evals is the user's call.*
+- **Train-side seeding** — add explicit `torch`/`numpy`/`random` seeding (+ `cudnn.deterministic`) beyond `training_args.seed`; `random`/`numpy` are imported but never seeded.
+- **`train.py:46-52`, `test.py:65-85`** — `read_json`/`write_json` swallow all exceptions and return/print `None`, which propagates into slicing (`train.py:331`) as an opaque error. Let them raise (or raise a clear message).
+
+### Dead code / cruft purge
+- ~20 commented `# import pdb; pdb.set_trace()` lines (`train.py:184,249,301,325`; `test.py:109,113,143,215`; `model.py:295,321,353,570,579,659,710,734,786,811,866`).
+- Commented-out log/save/dataset/weight-tie blocks (`train.py:97-99,511-516`; `test.py:119-120,125,151-165`; `model.py:336,355-358`, and the commented non-autocast duplicates).
+- No-op/unreachable branches: `model.py:232-234` (`else: ...`), `train.py:137-138` (always-false `segment` branch).
+- Redundant duplicate imports (`train.py:21,29,34`; `test.py:25,47,27-28,48`; `model.py:7,19` incl. unused `random`).
+
+### Hardcoded cluster paths (crash off-cluster)
+- `train.py:482` (`/home/ubuntu/coconut/...`), `test.py:155,160,166` (`/mnt/shared-storage-user/...`), `model.py:113` (`/users/k24020023/...`). Route through `data_args.data_path` or raise a clear "set --data_path" error. Affects only the non-GSM8K dataset branches.
+
+### Comments / docstrings
+- Translate all Chinese-language comments/docstrings to English (`train.py:38,40,44,51`; `test.py:53-79`; `model.py:175,234,245,247`).
+- Add module docstrings to `train.py`, `test.py`, `model.py`.
+
+### Verification for this section
+- After edits: `bash scripts/train_gpt2_gsm8k_pondernet.sh --max_train_samples 8 --num_train_epochs 1` (or the smoke test) runs without error; an eval invocation runs and now produces identical results on repeat (determinism check). No change to the loss math — spot-check that a short train step's loss components match pre-change values.
 
 ## Open items requiring user input during implementation
 
