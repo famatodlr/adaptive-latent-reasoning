@@ -195,7 +195,7 @@ The design is intentionally MLflow-ready so a later integration needs no rework:
 - Renaming checkpoint-bound module attrs (`codi`, `decoder`, `prj`, `halt_head`, `pj_in`, `pj_out`) — would require a state_dict remap shim; deferred.
 - **Module structural refactor** — extracting shared logic into `src/` (`data.py`, `eval_utils.py`, `io_utils.py`), making `train.py`/`test.py` thin entrypoints, decomposing the `train()`/`evaluation()`/`forward()` monoliths, promoting hardcoded hyperparams to args, a dataset registry, and moving `smoke_pondernet.py → tests/`. All deferred to a follow-up; the duplication between `train.py`/`test.py` is left in place for now.
 - Config-driven run files / changes to the script argument system beyond path/flag updates.
-- Any change to the training/loss/inference **math**. (Note: §12 *does* intentionally change runtime behavior in three safe ways — removing a hang-causing `breakpoint()`, restoring deterministic eval seeding, and making I/O errors raise instead of returning `None`.)
+- Any change to the training/loss/inference **math**. (Note: §12 *does* intentionally change runtime behavior in safe ways — removing a hang-causing `breakpoint()`, making I/O errors raise instead of returning `None`, restoring an eval-time seed guard for the sampling path, and forcing a single greedy-eval pass for ~5× speedup. None alter the recorded `runs.md` accuracies.)
 - Retraining the known-bad run or the failed warm-start.
 - Implementing MLflow.
 
@@ -226,11 +226,15 @@ Scripts (`scripts/*.sh`, `fetch_simcot_decoder.py`) are already at a good standa
 - Slim `pondernet/requirements.txt` from the full `pip freeze` (60+ lines incl. transitive + `nvidia-*` wheels) down to direct top-level deps; note the root `uv`/`uv.lock` as the source of truth.
 - Remove the stale LFS rule in `pondernet/.gitattributes` (`models/simcot_gpt2_decoder/*.safetensors filter=lfs …`) — the decoder is being un-tracked and moved (§3–§4), so the rule is dead.
 
-### Genuine bugs (affect correctness / reproducibility)
-- **`train.py:254-255`** — live `breakpoint()` inside `except Exception` hangs non-interactive training. Replace with a `raise` carrying the offending sequence.
-- **`test.py:253`** — `#set_seed(42)` is commented out while eval samples (`do_sample=True`, `temperature/top_k/top_p` at `test.py:240-246`) across passes → nondeterministic accuracies. Restore deterministic seeding. *Caveat: this can shift previously reported eval numbers; re-running affected evals is the user's call.*
-- **Train-side seeding** — add explicit `torch`/`numpy`/`random` seeding (+ `cudnn.deterministic`) beyond `training_args.seed`; `random`/`numpy` are imported but never seeded.
+### Correctness bugs
+- **`train.py:254-255`** — live `breakpoint()` inside `except Exception` hangs non-interactive training. Replace with a `raise` carrying the offending sequence. (The one true correctness fix here.)
 - **`train.py:46-52`, `test.py:65-85`** — `read_json`/`write_json` swallow all exceptions and return/print `None`, which propagates into slicing (`train.py:331`) as an opaque error. Let them raise (or raise a clear message).
+
+### Eval-determinism guard + ~5× eval speedup
+None of these change the recorded `runs.md` accuracies — the eval scripts pass `--greedy True`, so the actual decode path is **argmax** (`test.py:358`), which is already deterministic and RNG-free. These harden the *other* path and remove wasted compute:
+- **`test.py:253`** — `#set_seed(42)` is commented out. The sampling branch (`test.py:380`, `torch.multinomial`) is only reached when `greedy=False` (its default, `model.py:116`) — a silent footgun for anyone who runs `test.py` without `--greedy True`. Restore `set_seed` at eval start so that path is reproducible if used. No effect on greedy runs.
+- **`test.py:485`** — `for i in range(inf_num_iterations)` (default 5, never overridden by the scripts) re-runs `evaluation()` 5× and averages. Under `--greedy True` the 5 passes are identical → ~5× wasted eval wall-clock. **Fix: force a single pass when `greedy` is set**, leaving the 5-pass averaging intact for the sampling regime (`--greedy False`). Speed-only change; accuracies unchanged.
+- **Train-side seeding** — seed `numpy`/`random` from `training_args.seed` (both imported, never seeded). Leave `cudnn.deterministic` off (GPU bitwise determinism rarely worth the perf cost). Negligible effect on results.
 
 ### Dead code / cruft purge
 - ~20 commented `# import pdb; pdb.set_trace()` lines (`train.py:184,249,301,325`; `test.py:109,113,143,215`; `model.py:295,321,353,570,579,659,710,734,786,811,866`).
@@ -246,7 +250,10 @@ Scripts (`scripts/*.sh`, `fetch_simcot_decoder.py`) are already at a good standa
 - Add module docstrings to `train.py`, `test.py`, `model.py`.
 
 ### Verification for this section
-- After edits: `bash scripts/train_gpt2_gsm8k_pondernet.sh --max_train_samples 8 --num_train_epochs 1` (or the smoke test) runs without error; an eval invocation runs and now produces identical results on repeat (determinism check). No change to the loss math — spot-check that a short train step's loss components match pre-change values.
+- A short train run (`--max_train_samples 8 --num_train_epochs 1`) or the smoke test runs without error.
+- A greedy eval (`--greedy True`) still produces the **same accuracy** as before, now in a single pass (~5× faster); spot-check it matches one of the prior 5-pass values.
+- A sampling eval (`--greedy False`) gives identical results across two runs (seed guard works).
+- No change to the loss math — spot-check that a short train step's loss components match pre-change values.
 
 ## Open items requiring user input during implementation
 
