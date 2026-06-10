@@ -189,7 +189,7 @@ The design is intentionally MLflow-ready so a later integration needs no rework:
 
 **Branch:** all work happens on `chore/repo-professionalization` (off `pondernet`).
 
-**In scope:** directory restructure; pretrained renames; decoder move + gitignore; run migration, rescue, and targeted cleanup; `runs.md` manifest; 4 safe code renames + inline comments; `parameters.md` glossary; `pipeline.md`; MLflow-readiness notes/gitignore reservation; **`pondernet/` module hygiene — mechanical + bug-fix tier only (§12)**.
+**In scope:** directory restructure; pretrained renames; decoder move + gitignore; run migration, rescue, and targeted cleanup; `runs.md` manifest; 4 safe code renames + inline comments; `parameters.md` glossary; `pipeline.md`; MLflow-readiness notes/gitignore reservation; **`pondernet/` module hygiene — mechanical + bug-fix tier only (§12)**; **`data/` integration — wire local training data, rename `train15k`, add jsonl loader (§13)**.
 
 **Out of scope (non-goals):**
 - Renaming checkpoint-bound module attrs (`codi`, `decoder`, `prj`, `halt_head`, `pj_in`, `pj_out`) — would require a state_dict remap shim; deferred.
@@ -207,8 +207,9 @@ Each step is independently verifiable:
 2. Docs scaffolding: `parameters.md` glossary + CLI reference.
 3. Safe code renames (4 identifiers) + update in-repo scripts; verify training/eval still launches.
 4. Directory restructure: `models/pretrained/` + decoder move + `.gitignore` update + script path updates.
-5. Build `runs.md` mapping table → **user approval gate** → execute migration, rescue, and deletions.
-6. `pipeline.md` (depends on final paths/run-ids) + MLflow-readiness gitignore reservation.
+5. `data/` integration (§13): jsonl loader, rename `train15k`, pin train-script `--data_path` default.
+6. Build `runs.md` mapping table → **user approval gate** → execute migration, rescue, and deletions.
+7. `pipeline.md` (depends on final paths/run-ids/data layout) + MLflow-readiness gitignore reservation.
 
 ## 11. Verification
 
@@ -254,6 +255,23 @@ None of these change the recorded `runs.md` accuracies — the eval scripts pass
 - A greedy eval (`--greedy True`) still produces the **same accuracy** as before, now in a single pass (~5× faster); spot-check it matches one of the prior 5-pass values.
 - A sampling eval (`--greedy False`) gives identical results across two runs (seed guard works).
 - No change to the loss math — spot-check that a short train step's loss components match pre-change values.
+
+## 13. `data/` integration (option 1: wire local training data)
+
+`data/` (gitignored, ~104 MB) holds the GSM8k-Aug jsonl files, but the pipeline ignores them: training re-derives "first 15000" from the HF hub (`load_dataset("zen-E/GSM8k-Aug")` at `train.py:329,465` + `--max_train_samples 15000`), so the training set depends on hub version/ordering rather than a pinned local file. This wires the local **training** data in for reproducibility; **eval stays on the HF hub** (`gsm8k-main`) to keep recorded `runs.md` accuracies comparable.
+
+### Changes
+- **Rename** `data/gsm8k_aug/train_first15000.jsonl` → `data/gsm8k_aug/train15k.jsonl`. Nothing references the old name today, so the rename is isolated.
+- **jsonl loader**: add a small `read_jsonl` helper (local files are line-delimited; current `read_json` at `train.py:42` is `json.load` and fails on them). Use it when `--data_path` ends in `.jsonl`. ~5 lines — the only new code in the data work. The file's schema (`question`/`cot`/`answer`) already matches the `icot` training branch (`train.py:334-352`).
+- **Train script default**: add `DATA_DIR="${DATA_DIR:-../data}"` and set `--data_path "${DATA_PATH:-$DATA_DIR/gsm8k_aug/train15k.jsonl}"` so training is **pinned to the 15k subset by default**. Drop the now-redundant `--max_train_samples 15000` from the script (the file defines the set; the flag stays available for ad-hoc capping). The full set (`train.jsonl`) remains available via `DATA_PATH` override.
+- **Eval scripts**: unchanged default (HF `gsm8k-main`). Local `test.jsonl` / `gsm8k_test_100.jsonl` documented as optional `--data_path` inputs; the latter has a different `id`/`input` schema and is left as-is (not wired).
+- **pipeline.md**: document `data/` layout, HF provenance (`zen-E/GSM8k-Aug`), how to obtain/regenerate the files manually, and the local-train / hub-eval split.
+
+### Non-goals (deferred to a follow-up)
+`scripts/prepare_data.py` regeneration tooling (so a fresh clone with empty `data/` can rebuild it), moving eval onto local data, and tidying/renaming the rest of `data/`.
+
+### Verification
+A short train run with no `--data_path` reads `data/gsm8k_aug/train15k.jsonl` and trains without error over 15000 examples; spot-check the first example matches the prior HF-hub first record.
 
 ## Open items requiring user input during implementation
 
