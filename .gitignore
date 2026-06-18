@@ -37,6 +37,9 @@ __pycache__/
 # Session scratch / handoff notes (local only)
 last-session-CLAUDE.md
 
+# Superpowers plans / internal tooling (local only)
+docs/superpowers/
+
 # macOS
 .DS_Store
 
