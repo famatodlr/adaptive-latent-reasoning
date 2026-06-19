@@ -43,5 +43,5 @@ Create the git-tracked scaffolding for a new experiment.
    |-----|-------------|--------------|-----------|--------|--------|
    ```
 
-6. **Add a row to `docs/experiments.md`** under the table: `| <NN> | [<name>](experiments/<NN-exp>/experiment.md) | <one-line what> | — | active |`.
+6. **Add a row to `docs/experiments.md`** under the **main index table** (the `| # | experiment | what it tested | best result | status |` one — *not* the "Active / deferred" table): `| <NN> | [<name>](experiments/<NN-exp>/experiment.md) | <one-line what> | — | active |`.
 7. **Tell the user** the exact `EXP=<NN-exp>` string to use when launching runs, and to log finished runs with `/log-run`.
