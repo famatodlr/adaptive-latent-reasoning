@@ -520,6 +520,17 @@ train15k.jsonl, default train script --data_path to the local pinned 15k subset
 - Create: `docs/runs.md`
 - Move/delete (disk, gitignored): under `models/`, `outputs/`, `results/`
 
+> **Current state (as of 2026-06-19):** `models/checkpoints/` and `outputs/` are already fully migrated to run-id convention — only `results/` still has non-standard shorthand dirs. The two migration commands in Step 5 that target old-style checkpoint/output names are likely no-ops; leave them in for safety.
+
+> ⚠️ **TWO ACTIVE RUNS — DO NOT TOUCH THESE DIRECTORIES:**
+> - `models/checkpoints/simcot-pondernet-k_recipe_sweep_bc-recipeB-k6-ep5/` (RTX 3090, Epoch 1/5, ~2h 21m left as of Jun 19 16:17)
+> - `outputs/simcot-pondernet-k_recipe_sweep_bc-recipeB-k6-ep5/`
+> - `models/checkpoints/optionb-cold-coarse/` (RTX 3060, Epoch 1/30, still running as of Jun 19 16:17)
+> - `outputs/optionb-cold-coarse/`
+>
+> Note: `recipeB-k4-ep5` finished between the plan update and Jun 19 16:17 — its dirs are safe to touch.
+> Skip the two above in all Steps below. They already follow the run-id convention and will be added to `runs.md` in Step 5b once they finish.
+
 > ⚠️ **HARD GATE:** Build and present the manifest, then STOP. Do **not** run any `mv`/`rm` (Steps 4–6) until the user explicitly approves the table. These artifacts are gitignored → deletions are not git-recoverable.
 
 - [ ] **Step 1: Gather the facts for the manifest**
@@ -574,26 +585,43 @@ ls "$DST"
 
 - [ ] **Step 5: (AFTER APPROVAL) Migrate the surviving runs to run-ids**
 
+> Skip `simcot-pondernet-k_recipe_sweep_bc-recipeB-k{4,6}-ep5` (active/k_recipe) and `optionb-cold-coarse` (active). See Step 5b.
+>
+> **Partial progress (2026-06-19):** `checkpoints/` and `outputs/` are fully in run-id convention. In `results/`: shorthand eval dirs consolidated (`fixcheck{,2,3}/` → gcfix-100k; `optionb-full/ccurve/` → optionb-run1; `optionb-run2eval/sweep/` → optionb-run2; cross-run summaries → `_analysis/`). **Still pending:** `simcot-pondernet-gammasweep-g*` dirs and other per-run dirs remain flat at top level of results/ — need to check if these require further reorganization per spec or are already correct as-is.
+
 ```bash
 cd /home/tpnlp/adaptive-latent-reasoning
-# checkpoints
-mv models/simcot_joint_ep40     models/checkpoints/simcot-pondernet-joint-ep40
-mv models/halt_head_gpt2_ep40   models/checkpoints/simcot-pondernet-halthead-ep40
-# outputs
-mv outputs/halt_head_gpt2_ep40  outputs/simcot-pondernet-halthead-ep40
-mv outputs/simcot_joint_ep40    outputs/simcot-pondernet-joint-ep40
-mv outputs/simcot_warmstart_lr1e4 outputs/simcot-pondernet-warmstart-lr1e4
+# checkpoints (old-style names — likely already migrated; mv will no-op if src missing)
+mv models/simcot_joint_ep40     models/checkpoints/simcot-pondernet-joint-ep40    2>/dev/null || true
+mv models/halt_head_gpt2_ep40   models/checkpoints/simcot-pondernet-halthead-ep40 2>/dev/null || true
+# outputs (old-style names — likely already migrated)
+mv outputs/halt_head_gpt2_ep40    outputs/simcot-pondernet-halthead-ep40          2>/dev/null || true
+mv outputs/simcot_joint_ep40      outputs/simcot-pondernet-joint-ep40             2>/dev/null || true
+mv outputs/simcot_warmstart_lr1e4 outputs/simcot-pondernet-warmstart-lr1e4        2>/dev/null || true
 mkdir -p outputs/simcot-pondernet-lr1e4
 mv outputs/pondernet/logs/* outputs/simcot-pondernet-lr1e4/ 2>/dev/null || true
-# results (thresholds become sub-variants of one run-id)
-mv results/fixedk/lr1e4_k6            results/simcot-fixedk-k6-lr1e4
-mv results/fixedk/simcot_baseline_k6  results/simcot-baseline-k6
+# results — mix of old shorthand dirs still present as of 2026-06-19;
+# rename to run-id convention (all finished runs, active runs excluded above)
+mv results/fixedk/lr1e4_k6            results/simcot-fixedk-k6-lr1e4              2>/dev/null || true
+mv results/fixedk/simcot_baseline_k6  results/simcot-baseline-k6                  2>/dev/null || true
 mkdir -p results/simcot-pondernet-lr1e4
-mv results/pondernet/lr1e4_thr0.8     results/simcot-pondernet-lr1e4/thr0.8
-mv results/pondernet/lr1e4_thr0.9     results/simcot-pondernet-lr1e4/thr0.9
-mv results/pondernet/simcot_joint_ep40       results/simcot-pondernet-joint-ep40
-mv results/pondernet/simcot_warmstart_lr1e4  results/simcot-pondernet-warmstart-lr1e4
+mv results/pondernet/lr1e4_thr0.8     results/simcot-pondernet-lr1e4/thr0.8       2>/dev/null || true
+mv results/pondernet/lr1e4_thr0.9     results/simcot-pondernet-lr1e4/thr0.9       2>/dev/null || true
+mv results/pondernet/simcot_joint_ep40       results/simcot-pondernet-joint-ep40   2>/dev/null || true
+mv results/pondernet/simcot_warmstart_lr1e4  results/simcot-pondernet-warmstart-lr1e4 2>/dev/null || true
+echo "=== final results layout ==="
+ls results/
 ```
+
+- [ ] **Step 5b: (DEFERRED — after active runs finish) Add active runs to `runs.md`**
+
+Once both runs complete, eval them and add rows to `docs/runs.md`:
+- `simcot-pondernet-k_recipe_sweep_bc-recipeB-k6-ep5` — RecipeB, K=6, γ=0.1, `lora_prj` scope, 100k data, 5ep (RTX 3090; started Jun 19 ~16:00)
+- `optionb-cold-coarse` — Option B, cold-start, `ob_num_steps=3`, `ob_subvectors_per_step=3`, LR=3e-3, 30ep, 15k data (RTX 3060)
+
+Also add `simcot-pondernet-k_recipe_sweep_bc-recipeB-k4-ep5` (finished before Jun 19 16:17) if not already recorded.
+
+No directory moves needed — both already use the run-id convention and write to the correct locations.
 
 - [ ] **Step 6: (AFTER APPROVAL) Delete the dead artifacts**
 

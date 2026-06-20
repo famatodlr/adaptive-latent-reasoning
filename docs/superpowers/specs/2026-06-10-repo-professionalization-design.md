@@ -3,7 +3,7 @@
 **Date:** 2026-06-10
 **Branch:** `pondernet`
 **Author:** brainstormed with Claude
-**Status:** Draft for review
+**Status:** Not implemented
 
 ## Goal
 
@@ -16,6 +16,20 @@ Make the `adaptive-latent-reasoning` repo more professional and navigable, focus
 5. Unclear PonderNet parameter / variable names.
 
 This is a single, cohesive structure-and-documentation pass. It explicitly does **not** change training or loss logic, and does **not** retrain anything.
+
+## ⚠️ Active experiments — do not touch during implementation
+
+The following directory trees are part of ongoing or recently completed experiments and must **not** be moved, renamed, or deleted during any implementation step:
+
+- `models/checkpoints/simcot-pondernet-k_recipe_sweep*/`
+- `outputs/simcot-pondernet-k_recipe_sweep*/`
+- `results/simcot-pondernet-k_recipe_sweep*/`
+- `results/k_recipe_sweep*/`
+- `models/checkpoints/optionb-*/`
+- `outputs/optionb-*/`
+- `results/optionb-*/`
+
+These will be integrated into `runs.md` separately once the sweeps complete. All migration, rescue, and cleanup steps (Task 6) must skip these prefixes.
 
 ## Guiding decisions (from brainstorming)
 
