@@ -931,6 +931,21 @@ class CODI(torch.nn.Module):
         if self.model_args.use_decoder:
             explain_loss_total = torch.as_tensor(explain_loss_total, device=loss.device, dtype=loss.dtype)
             loss += explain_loss_total
+
+        # Graph-connected handles for the PonderNet loss, captured BEFORE the detach block
+        # below. The detaches exist only so the returned dict carries plain numbers for
+        # logging; upstream CODI/SIM-CoT can do that safely because it has already finished
+        # building `loss` at this point. The PonderNet branch, however, *rebuilds* `loss`
+        # further down (it substitutes l_pondernet for the fixed-K ce_loss_total), and if it
+        # reads the names below after they have been rebound to detached copies, then
+        # L_distill, L_ref and L_step silently contribute ZERO gradient - which is exactly
+        # the bug that produced exp-10's no-CoT-level result and left the auxiliary decoder
+        # at its vanilla-GPT-2 init in every run 02-11.
+        # See docs/exp10-diagnosis.md section 4.0.
+        distill_loss_graph = distill_loss_total
+        ref_ce_loss_graph = ref_ce_loss
+        explain_loss_graph = explain_loss_total
+
         if ce_loss_total != 0:
             ce_loss_total = ce_loss_total.detach()
         if distill_loss_total != 0:
@@ -979,9 +994,15 @@ class CODI(torch.nn.Module):
             #   beta * L_step keeps the aux-decoder reconstruction loss
             #   gamma * KL_geom adds the compute-efficiency pressure
             #   distill and ref_ce are preserved from original CODI
-            loss = l_pondernet + distill_loss_total + ref_ce_loss
+            # NOTE: these MUST be the *_graph handles captured before the detach block
+            # above, not distill_loss_total / ref_ce_loss / explain_loss_total, which by
+            # this point are detached copies kept for logging. Using the detached names
+            # here is the exp-10 root-cause bug (docs/exp10-diagnosis.md section 4.0):
+            # it reduces the objective to L_ponder + gamma*KL_geom and starves the
+            # auxiliary decoder of gradient entirely.
+            loss = l_pondernet + distill_loss_graph + ref_ce_loss_graph
             if self.model_args.use_decoder:
-                loss = loss + self.pondernet_beta * explain_loss_total
+                loss = loss + self.pondernet_beta * explain_loss_graph
             loss = loss + self.pondernet_gamma * kl_geom
 
             if self.print_loss:
